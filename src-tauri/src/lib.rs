@@ -1,4 +1,5 @@
 mod commands;
+pub mod keys;
 
 use commands::*;
 
@@ -20,7 +21,12 @@ pub fn run() {
             create_folder,
             delete_entry,
             rename_entry,
-            run_git_command
+            run_git_command,
+            save_api_key,
+            get_api_key,
+            delete_api_key,
+            has_api_key,
+            make_llm_request
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
