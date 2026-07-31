@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { X, Plus, Trash2, Cpu, Bot, Key, RotateCcw } from "lucide-react";
 import { useStore } from "../store/useStore";
 import { useProviderStore } from "../store/useProviderStore";
@@ -36,6 +36,10 @@ export function SettingsDrawer() {
   const [activeTab, setActiveTab] = useState<"providers" | "agents">("providers");
   const [showAddModal, setShowAddModal] = useState(false);
 
+  // State to track masked keys for each provider
+  const [providerKeys, setProviderKeys] = useState<Record<string, string>>({});
+  const [keyVisibility, setKeyVisibility] = useState<Record<string, boolean>>({});
+
   // New Provider Form State
   const [selectedPreset, setSelectedPreset] = useState("custom");
   const [name, setName] = useState("");
@@ -59,11 +63,15 @@ export function SettingsDrawer() {
     }
   };
 
-  const handleSaveNewProvider = () => {
+  const handleSaveNewProvider = async () => {
     if (!name.trim() || !endpoint.trim()) return;
+    if (!apiKey.trim()) {
+      alert("API key is required");
+      return;
+    }
 
-    const modelsList = modelsInput.split(",").map(m => m.trim()).filter(Boolean);
-    addProvider(
+    const modelsList = modelsInput.split(",").map((m: string) => m.trim()).filter(Boolean);
+    await addProvider(
       {
         name,
         endpoint,
@@ -82,12 +90,34 @@ export function SettingsDrawer() {
     setName("");
     setEndpoint("");
     setApiKeyInput("");
+    setMaskedKey("");
     setSelectedPreset("custom");
     setShowAddModal(false);
   };
 
-  const planProvider = providers.find(p => p.id === planningAgent.providerId);
-  const devProvider = providers.find(p => p.id === developmentAgent.providerId);
+  // Mask API key for display (show only last 4 chars)
+  const maskKey = (key: string) => {
+    if (!key || key.length <= 4) return "••••";
+    return `••••${key.substring(key.length - 4)}`;
+  };
+
+  // Load masked keys for all providers
+  useEffect(() => {
+    const loadAllProviderKeys = async () => {
+      const keysMap: Record<string, string> = {};
+      for (const provider of providers) {
+        const key = await getApiKey(provider.id);
+        if (key) {
+          keysMap[provider.id] = maskKey(key);
+        }
+      }
+      setProviderKeys(keysMap);
+    };
+    loadAllProviderKeys();
+  }, [providers, getApiKey]);
+
+  const planProvider = providers.find((p: any) => p.id === planningAgent.providerId);
+  const devProvider = providers.find((p: any) => p.id === developmentAgent.providerId);
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-background/50 backdrop-blur-sm">
@@ -165,7 +195,7 @@ export function SettingsDrawer() {
                         </span>
                       </div>
                       <button
-                        onClick={() => deleteProvider(p.id)}
+                        onClick={async () => await deleteProvider(p.id)}
                         className="p-1 rounded hover:bg-hover text-muted hover:text-error transition-colors"
                       >
                         <Trash2 size={14} />
@@ -178,12 +208,25 @@ export function SettingsDrawer() {
                       <label className="block text-[11px] font-semibold text-secondary">API Key</label>
                       <div className="flex gap-2">
                         <input
-                          type="password"
-                          defaultValue={getApiKey(p.id)}
-                          onBlur={(e) => setApiKey(p.id, e.target.value)}
+                          type={keyVisibility[p.id] ? "text" : "password"}
+                          defaultValue={providerKeys[p.id] || ""}
+                          onBlur={async (e) => {
+                            const newValue = e.target.value;
+                            if (newValue && newValue !== providerKeys[p.id]) {
+                              await setApiKey(p.id, newValue);
+                              setProviderKeys(prev => ({ ...prev, [p.id]: maskKey(newValue) }));
+                            }
+                          }}
                           placeholder="sk-..."
                           className="flex-1 bg-card border border-border rounded p-1.5 text-xs text-primary focus:outline-none focus:border-accent"
                         />
+                        <button
+                          type="button"
+                          onClick={() => setKeyVisibility(prev => ({ ...prev, [p.id]: !prev[p.id] }))}
+                          className="px-2 py-1 rounded bg-hover border border-border text-muted hover:text-primary text-xs"
+                        >
+                          {keyVisibility[p.id] ? "🙈" : "👁️"}
+                        </button>
                       </div>
                     </div>
 

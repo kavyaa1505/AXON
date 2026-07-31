@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { invoke } from "@tauri-apps/api/core";
 
 export interface ProviderEntry {
   id: string;
@@ -24,16 +25,18 @@ interface ProviderStoreState {
   planningAgent: AgentAssignment;
   developmentAgent: AgentAssignment;
 
-  addProvider: (provider: Omit<ProviderEntry, "id" | "status">, apiKey?: string) => void;
-  updateProvider: (id: string, updates: Partial<ProviderEntry>, apiKey?: string) => void;
-  deleteProvider: (id: string) => void;
+  addProvider: (provider: Omit<ProviderEntry, "id" | "status">, apiKey?: string) => Promise<void>;
+  updateProvider: (id: string, updates: Partial<ProviderEntry>, apiKey?: string) => Promise<void>;
+  deleteProvider: (id: string) => Promise<void>;
   resetToDefaultProviders: () => void;
   
   setPlanningAgent: (assignment: AgentAssignment) => void;
   setDevelopmentAgent: (assignment: AgentAssignment) => void;
 
-  getApiKey: (id: string) => string;
-  setApiKey: (id: string, apiKey: string) => void;
+  getApiKey: (id: string, agentId?: string) => Promise<string | null>;
+  setApiKey: (id: string, apiKey: string, agentId?: string) => Promise<void>;
+  hasApiKey: (id: string, agentId?: string) => Promise<boolean>;
+  deleteApiKey: (id: string, agentId?: string) => Promise<void>;
 }
 
 export const DEFAULT_PROVIDERS: ProviderEntry[] = [
@@ -282,41 +285,72 @@ export const useProviderStore = create<ProviderStoreState>((set, get) => ({
   planningAgent: loadInitialAssignment("planningAgent", { providerId: "anthropic", model: "claude-3-5-sonnet-20241022" }),
   developmentAgent: loadInitialAssignment("developmentAgent", { providerId: "groq", model: "llama-3.3-70b-versatile" }),
 
-  getApiKey: (id: string) => {
-    return localStorage.getItem(`gravity:providers:${id}:key`) || "";
+  getApiKey: async (id: string, agentId?: string) => {
+    try {
+      const result = await invoke<string | null>("get_api_key", { providerId: id, agentId });
+      return result;
+    } catch (e) {
+      console.error("Failed to get API key:", e);
+      return null;
+    }
   },
 
-  setApiKey: (id: string, apiKey: string) => {
-    localStorage.setItem(`gravity:providers:${id}:key`, apiKey);
+  setApiKey: async (id: string, apiKey: string, agentId?: string) => {
+    try {
+      await invoke("save_api_key", { providerId: id, key: apiKey, agentId });
+    } catch (e) {
+      console.error("Failed to save API key:", e);
+      throw e;
+    }
   },
 
-  addProvider: (providerData, apiKey) => {
+  hasApiKey: async (id: string, agentId?: string) => {
+    try {
+      const result = await invoke<boolean>("has_api_key", { providerId: id, agentId });
+      return result;
+    } catch (e) {
+      console.error("Failed to check API key:", e);
+      return false;
+    }
+  },
+
+  deleteApiKey: async (id: string, agentId?: string) => {
+    try {
+      await invoke("delete_api_key", { providerId: id, agentId });
+    } catch (e) {
+      console.error("Failed to delete API key:", e);
+      throw e;
+    }
+  },
+
+  addProvider: async (providerData, apiKey) => {
     const newId = "provider_" + Date.now();
     const newEntry: ProviderEntry = {
       ...providerData,
       id: newId,
-      status: apiKey ? "connected" : "untested"
+      status: "untested"
     };
     if (apiKey) {
-      localStorage.setItem(`gravity:providers:${newId}:key`, apiKey);
+      await get().setApiKey(newId, apiKey);
+      newEntry.status = "connected";
     }
     const updated = [...get().providers, newEntry];
     set({ providers: updated });
     localStorage.setItem("gravity:provider-registry", JSON.stringify(updated));
   },
 
-  updateProvider: (id, updates, apiKey) => {
+  updateProvider: async (id, updates, apiKey) => {
     if (apiKey !== undefined) {
-      localStorage.setItem(`gravity:providers:${id}:key`, apiKey);
+      await get().setApiKey(id, apiKey);
     }
     const updated = get().providers.map(p => p.id === id ? { ...p, ...updates } : p);
     set({ providers: updated });
     localStorage.setItem("gravity:provider-registry", JSON.stringify(updated));
   },
 
-  deleteProvider: (id) => {
+  deleteProvider: async (id) => {
+    await get().deleteApiKey(id);
     const updated = get().providers.filter(p => p.id !== id);
-    localStorage.removeItem(`gravity:providers:${id}:key`);
     set({ providers: updated });
     localStorage.setItem("gravity:provider-registry", JSON.stringify(updated));
   },
