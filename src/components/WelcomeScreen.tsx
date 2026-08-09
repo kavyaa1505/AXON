@@ -23,19 +23,25 @@ export function WelcomeScreen() {
   }, []);
 
   const loadRecents = () => {
-    const saved = localStorage.getItem("axon:recents");
+    const currentUser = localStorage.getItem("axon:last-session");
+    if (!currentUser) return;
+    const saved = localStorage.getItem(`axon:${currentUser}:recents`);
     if (saved) {
       try {
         setRecents(JSON.parse(saved));
       } catch (e) {
         console.error("Failed to parse recents", e);
       }
+    } else {
+      setRecents([]);
     }
   };
 
   const saveRecents = (items: RecentItem[]) => {
+    const currentUser = localStorage.getItem("axon:last-session");
+    if (!currentUser) return;
     setRecents(items);
-    localStorage.setItem("axon:recents", JSON.stringify(items));
+    localStorage.setItem(`axon:${currentUser}:recents`, JSON.stringify(items));
   };
 
   const handleOpenFolder = async () => {

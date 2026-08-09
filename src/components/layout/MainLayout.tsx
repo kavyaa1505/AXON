@@ -8,10 +8,11 @@ import { SettingsDrawer } from "../SettingsDrawer";
 import { StatusBar } from "../StatusBar";
 import { WelcomeScreen } from "../WelcomeScreen";
 import { DropOverlay } from "../DropOverlay";
+import { ManagerSurface } from "../ManagerSurface";
 import { useStore } from "../../store/useStore";
 
 export function MainLayout() {
-  const { sidebarOpen, terminalOpen, repoPath } = useStore();
+  const { sidebarOpen, terminalOpen, repoPath, viewMode } = useStore();
 
   return (
     <div className="flex flex-col h-screen w-screen bg-background overflow-hidden text-primary font-ui relative">
@@ -21,6 +22,8 @@ export function MainLayout() {
       <div className="flex-1 overflow-hidden">
         {!repoPath ? (
           <WelcomeScreen />
+        ) : viewMode === "manager" ? (
+          <ManagerSurface />
         ) : (
           <Group orientation="horizontal" id="axon-layout">
             {sidebarOpen && (

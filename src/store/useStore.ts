@@ -1,5 +1,7 @@
 import { create } from 'zustand';
 import { FileNode, readDirTree, readFileContent, writeFileContent, createFile, createFolder, deleteItem, renameItem, selectFolder } from '../lib/fileService';
+import { useTaskStore } from './useTaskStore';
+import { useCheckpointStore } from './useCheckpointStore';
 
 export interface OpenFile {
   path: string;
@@ -36,11 +38,13 @@ interface StoreState {
   closeFile: (filePath: string) => void;
   setActiveFilePath: (filePath: string) => void;
   updateActiveFileContent: (content: string) => void;
+  syncFileContent: (path: string, content: string) => void;
   saveActiveFile: () => Promise<void>;
   createNewFile: (parentPath: string, name: string) => Promise<void>;
   createNewFolder: (parentPath: string, name: string) => Promise<void>;
   deleteWorkspaceItem: (path: string) => Promise<void>;
   renameWorkspaceItem: (oldPath: string, newPath: string) => Promise<void>;
+  handleWriteWithSafety: (path: string, newContent: string) => Promise<boolean>;
 
   // Layout state
   sidebarOpen: boolean;
@@ -49,6 +53,13 @@ interface StoreState {
   setTerminalOpen: (open: boolean) => void;
   settingsOpen: boolean;
   setSettingsOpen: (open: boolean) => void;
+  viewMode: "editor" | "manager";
+  setViewMode: (mode: "editor" | "manager") => void;
+
+  memorySizeWarning: boolean;
+  setMemorySizeWarning: (warn: boolean) => void;
+
+  resetAllUserState: () => void;
 }
 
 export const useStore = create<StoreState>((set, get) => ({
@@ -159,6 +170,13 @@ export const useStore = create<StoreState>((set, get) => ({
     });
   },
 
+  syncFileContent: (path, content) => {
+    const { openFiles } = get();
+    set({
+      openFiles: openFiles.map(f => f.path === path ? { ...f, content, isDirty: false } : f)
+    });
+  },
+
   saveActiveFile: async () => {
     const { openFiles, activeFilePath } = get();
     if (!activeFilePath) return;
@@ -201,11 +219,54 @@ export const useStore = create<StoreState>((set, get) => ({
     await get().refreshFileTree();
   },
 
+  handleWriteWithSafety: async (path, newContent) => {
+    const { repoPath, syncFileContent } = get();
+    if (repoPath && !path.startsWith(repoPath)) {
+      if (!window.confirm(`AXON wants to write to ${path} which is outside your workspace. Allow?`)) {
+        return false;
+      }
+    } else {
+      const confirmed = sessionStorage.getItem("axon:write_confirmed");
+      if (!confirmed) {
+         if (!window.confirm(`AXON wants to write to ${path}. Allow AXON to modify files on disk?`)) {
+           return false;
+         }
+         sessionStorage.setItem("axon:write_confirmed", "true");
+      }
+    }
+    try {
+      await writeFileContent(path, newContent);
+      syncFileContent(path, newContent);
+      return true;
+    } catch (e) {
+      console.error("Failed to write file", e);
+      alert("Failed to write file");
+      return false;
+    }
+  },
+
   sidebarOpen: true,
   setSidebarOpen: (open) => set({ sidebarOpen: open }),
   terminalOpen: true,
   setTerminalOpen: (open) => set({ terminalOpen: open }),
   settingsOpen: false,
   setSettingsOpen: (open) => set({ settingsOpen: open }),
+  viewMode: "editor",
+  setViewMode: (mode) => set({ viewMode: mode }),
+
+  memorySizeWarning: false,
+  setMemorySizeWarning: (warn) => set({ memorySizeWarning: warn }),
+
+  resetAllUserState: () => {
+    useTaskStore.getState().resetTasks();
+    useCheckpointStore.getState().resetCheckpoints();
+    set({
+      repoPath: null,
+      fileTree: [],
+      openFiles: [],
+      activeFilePath: null,
+      memorySizeWarning: false,
+    });
+  }
 }));
 

@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { invoke } from "@tauri-apps/api/core";
 
 export interface ProviderEntry {
   id: string;
@@ -28,12 +29,17 @@ interface ProviderStoreState {
   updateProvider: (id: string, updates: Partial<ProviderEntry>, apiKey?: string) => void;
   deleteProvider: (id: string) => void;
   resetToDefaultProviders: () => void;
+  setProviderStatus: (id: string, status: "connected" | "invalid" | "untested") => void;
   
   setPlanningAgent: (assignment: AgentAssignment) => void;
   setDevelopmentAgent: (assignment: AgentAssignment) => void;
 
-  getApiKey: (id: string) => string;
-  setApiKey: (id: string, apiKey: string) => void;
+  getApiKey: (id: string) => Promise<string>;
+  setApiKey: (id: string, apiKey: string) => Promise<void>;
+  getMaskedApiKey: (id: string) => Promise<string | null>;
+  
+  currentUsername: string | null;
+  initForUser: (username: string) => void;
 }
 
 export const DEFAULT_PROVIDERS: ProviderEntry[] = [
@@ -246,8 +252,8 @@ export const DEFAULT_PROVIDERS: ProviderEntry[] = [
   }
 ];
 
-const loadInitialProviders = (): ProviderEntry[] => {
-  const saved = localStorage.getItem("gravity:provider-registry");
+const loadInitialProviders = (username: string): ProviderEntry[] => {
+  const saved = localStorage.getItem(`gravity:${username}:provider-registry`);
   if (saved) {
     try {
       const parsed: ProviderEntry[] = JSON.parse(saved);
@@ -255,7 +261,7 @@ const loadInitialProviders = (): ProviderEntry[] => {
       const missingDefaults = DEFAULT_PROVIDERS.filter(p => !existingIds.has(p.id));
       if (missingDefaults.length > 0) {
         const merged = [...parsed, ...missingDefaults];
-        localStorage.setItem("gravity:provider-registry", JSON.stringify(merged));
+        localStorage.setItem(`gravity:${username}:provider-registry`, JSON.stringify(merged));
         return merged;
       }
       return parsed;
@@ -266,8 +272,8 @@ const loadInitialProviders = (): ProviderEntry[] => {
   return DEFAULT_PROVIDERS;
 };
 
-const loadInitialAssignment = (key: string, defaultAssignment: AgentAssignment): AgentAssignment => {
-  const saved = localStorage.getItem("gravity:agent-assignments");
+const loadInitialAssignment = (username: string, key: string, defaultAssignment: AgentAssignment): AgentAssignment => {
+  const saved = localStorage.getItem(`gravity:${username}:agent-assignments`);
   if (saved) {
     try {
       const parsed = JSON.parse(saved);
@@ -278,64 +284,108 @@ const loadInitialAssignment = (key: string, defaultAssignment: AgentAssignment):
 };
 
 export const useProviderStore = create<ProviderStoreState>((set, get) => ({
-  providers: loadInitialProviders(),
-  planningAgent: loadInitialAssignment("planningAgent", { providerId: "anthropic", model: "claude-3-5-sonnet-20241022" }),
-  developmentAgent: loadInitialAssignment("developmentAgent", { providerId: "groq", model: "llama-3.3-70b-versatile" }),
+  providers: DEFAULT_PROVIDERS,
+  planningAgent: { providerId: "anthropic", model: "claude-3-5-sonnet-20241022" },
+  developmentAgent: { providerId: "groq", model: "llama-3.3-70b-versatile" },
+  currentUsername: null,
 
-  getApiKey: (id: string) => {
-    return localStorage.getItem(`gravity:providers:${id}:key`) || "";
+  initForUser: (username: string) => {
+    set({
+      currentUsername: username,
+      providers: loadInitialProviders(username),
+      planningAgent: loadInitialAssignment(username, "planningAgent", { providerId: "anthropic", model: "claude-3-5-sonnet-20241022" }),
+      developmentAgent: loadInitialAssignment(username, "developmentAgent", { providerId: "groq", model: "llama-3.3-70b-versatile" }),
+    });
   },
 
-  setApiKey: (id: string, apiKey: string) => {
-    localStorage.setItem(`gravity:providers:${id}:key`, apiKey);
+  getApiKey: async (id: string) => {
+    const { currentUsername } = get();
+    if (!currentUsername) return "";
+    try {
+      const key = await invoke<string | null>("get_api_key", { username: currentUsername, providerId: id });
+      return key || "";
+    } catch (e) {
+      console.error(e);
+      return "";
+    }
+  },
+
+  setApiKey: async (id: string, apiKey: string) => {
+    const { currentUsername } = get();
+    if (!currentUsername) return;
+    await invoke("save_api_key", { username: currentUsername, providerId: id, key: apiKey });
+  },
+
+  getMaskedApiKey: async (id: string) => {
+    const { currentUsername } = get();
+    if (!currentUsername) return null;
+    try {
+      return await invoke<string | null>("get_api_key_masked", { username: currentUsername, providerId: id });
+    } catch (e) {
+      console.error(e);
+      return null;
+    }
   },
 
   addProvider: (providerData, apiKey) => {
+    const { currentUsername } = get();
+    if (!currentUsername) return;
     const newId = "provider_" + Date.now();
     const newEntry: ProviderEntry = {
       ...providerData,
       id: newId,
       status: apiKey ? "connected" : "untested"
     };
-    if (apiKey) {
-      localStorage.setItem(`gravity:providers:${newId}:key`, apiKey);
-    }
     const updated = [...get().providers, newEntry];
     set({ providers: updated });
-    localStorage.setItem("gravity:provider-registry", JSON.stringify(updated));
+    localStorage.setItem(`gravity:${currentUsername}:provider-registry`, JSON.stringify(updated));
   },
 
   updateProvider: (id, updates, apiKey) => {
-    if (apiKey !== undefined) {
-      localStorage.setItem(`gravity:providers:${id}:key`, apiKey);
-    }
+    const { currentUsername } = get();
+    if (!currentUsername) return;
     const updated = get().providers.map(p => p.id === id ? { ...p, ...updates } : p);
     set({ providers: updated });
-    localStorage.setItem("gravity:provider-registry", JSON.stringify(updated));
+    localStorage.setItem(`gravity:${currentUsername}:provider-registry`, JSON.stringify(updated));
   },
 
   deleteProvider: (id) => {
+    const { currentUsername } = get();
+    if (!currentUsername) return;
     const updated = get().providers.filter(p => p.id !== id);
-    localStorage.removeItem(`gravity:providers:${id}:key`);
     set({ providers: updated });
-    localStorage.setItem("gravity:provider-registry", JSON.stringify(updated));
+    localStorage.setItem(`gravity:${currentUsername}:provider-registry`, JSON.stringify(updated));
   },
 
   resetToDefaultProviders: () => {
+    const { currentUsername } = get();
+    if (!currentUsername) return;
     set({ providers: DEFAULT_PROVIDERS });
-    localStorage.setItem("gravity:provider-registry", JSON.stringify(DEFAULT_PROVIDERS));
+    localStorage.setItem(`gravity:${currentUsername}:provider-registry`, JSON.stringify(DEFAULT_PROVIDERS));
+  },
+
+  setProviderStatus: (id, status) => {
+    const { currentUsername } = get();
+    if (!currentUsername) return;
+    const updated = get().providers.map(p => p.id === id ? { ...p, status } : p);
+    set({ providers: updated });
+    localStorage.setItem(`gravity:${currentUsername}:provider-registry`, JSON.stringify(updated));
   },
 
   setPlanningAgent: (assignment) => {
+    const { currentUsername } = get();
+    if (!currentUsername) return;
     set({ planningAgent: assignment });
-    const current = JSON.parse(localStorage.getItem("gravity:agent-assignments") || "{}");
-    localStorage.setItem("gravity:agent-assignments", JSON.stringify({ ...current, planningAgent: assignment }));
+    const current = JSON.parse(localStorage.getItem(`gravity:${currentUsername}:agent-assignments`) || "{}");
+    localStorage.setItem(`gravity:${currentUsername}:agent-assignments`, JSON.stringify({ ...current, planningAgent: assignment }));
   },
 
   setDevelopmentAgent: (assignment) => {
+    const { currentUsername } = get();
+    if (!currentUsername) return;
     set({ developmentAgent: assignment });
-    const current = JSON.parse(localStorage.getItem("gravity:agent-assignments") || "{}");
-    localStorage.setItem("gravity:agent-assignments", JSON.stringify({ ...current, developmentAgent: assignment }));
+    const current = JSON.parse(localStorage.getItem(`gravity:${currentUsername}:agent-assignments`) || "{}");
+    localStorage.setItem(`gravity:${currentUsername}:agent-assignments`, JSON.stringify({ ...current, developmentAgent: assignment }));
   }
 }));
 

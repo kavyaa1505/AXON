@@ -106,3 +106,38 @@ pub fn run_git_command(args: Vec<String>, cwd: String) -> Result<String, String>
     }
 }
 
+use crate::keys;
+
+#[tauri::command]
+pub fn get_api_key_masked(username: String, provider_id: String, agent_id: Option<String>) -> Result<Option<String>, String> {
+    keys::get_api_key_masked(&username, &provider_id, agent_id.as_deref())
+}
+
+#[tauri::command]
+pub fn get_api_key(username: String, provider_id: String, agent_id: Option<String>) -> Result<Option<String>, String> {
+    keys::get_api_key(&username, &provider_id, agent_id.as_deref())
+}
+
+#[tauri::command]
+pub fn save_api_key(username: String, provider_id: String, agent_id: Option<String>, key: String) -> Result<(), String> {
+    keys::save_api_key(&username, &provider_id, agent_id.as_deref(), &key)
+}
+
+#[tauri::command]
+pub async fn make_llm_request(
+    username: String,
+    provider_id: String,
+    url: String,
+    headers: std::collections::HashMap<String, String>,
+    body: serde_json::Value,
+    auth_type: String,
+    auth_header: String,
+    auth_param: String,
+) -> Result<serde_json::Value, crate::provider_errors::ProviderError> {
+    crate::llm::make_llm_request_internal(username, provider_id, url, headers, body, auth_type, auth_header, auth_param).await
+}
+
+#[tauri::command]
+pub fn migrate_legacy_keys(username: String, provider_ids: Vec<String>) -> Result<(), String> {
+    keys::migrate_legacy_keys(&username, provider_ids)
+}

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { X, Plus, Trash2, Cpu, Bot, Key, RotateCcw } from "lucide-react";
 import { useStore } from "../store/useStore";
 import { useProviderStore } from "../store/useProviderStore";
@@ -30,11 +30,30 @@ export function SettingsDrawer() {
     deleteProvider,
     resetToDefaultProviders,
     getApiKey,
-    setApiKey
+    setApiKey,
+    getMaskedApiKey
   } = useProviderStore();
 
   const [activeTab, setActiveTab] = useState<"providers" | "agents">("providers");
   const [showAddModal, setShowAddModal] = useState(false);
+
+  const [maskedKeys, setMaskedKeys] = useState<Record<string, string>>({});
+  const [draftKeys, setDraftKeys] = useState<Record<string, string>>({});
+  const [revealedKeys, setRevealedKeys] = useState<Record<string, string>>({});
+  const [saveErrors, setSaveErrors] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    if (!settingsOpen) return;
+    const loadKeys = async () => {
+      const masks: Record<string, string> = {};
+      for (const p of providers) {
+        const mask = await getMaskedApiKey(p.id);
+        if (mask) masks[p.id] = mask;
+      }
+      setMaskedKeys(masks);
+    };
+    loadKeys();
+  }, [settingsOpen, providers, getMaskedApiKey]);
 
   // New Provider Form State
   const [selectedPreset, setSelectedPreset] = useState("custom");
@@ -179,12 +198,55 @@ export function SettingsDrawer() {
                       <div className="flex gap-2">
                         <input
                           type="password"
-                          defaultValue={getApiKey(p.id)}
-                          onBlur={(e) => setApiKey(p.id, e.target.value)}
-                          placeholder="sk-..."
-                          className="flex-1 bg-card border border-border rounded p-1.5 text-xs text-primary focus:outline-none focus:border-accent"
+                          value={revealedKeys[p.id] !== undefined ? revealedKeys[p.id] : (draftKeys[p.id] || "")}
+                          onChange={(e) => {
+                            if (revealedKeys[p.id] !== undefined) {
+                              const newRev = { ...revealedKeys };
+                              delete newRev[p.id];
+                              setRevealedKeys(newRev);
+                            }
+                            setDraftKeys(prev => ({ ...prev, [p.id]: e.target.value }));
+                            if (saveErrors[p.id]) {
+                              const newErrs = { ...saveErrors };
+                              delete newErrs[p.id];
+                              setSaveErrors(newErrs);
+                            }
+                          }}
+                          onBlur={async () => {
+                            const val = draftKeys[p.id]?.trim();
+                            if (val) {
+                              try {
+                                await setApiKey(p.id, val);
+                                const newMask = await getMaskedApiKey(p.id);
+                                setMaskedKeys(prev => ({ ...prev, [p.id]: newMask || "" }));
+                                setDraftKeys(prev => ({ ...prev, [p.id]: "" }));
+                              } catch (err: any) {
+                                setSaveErrors(prev => ({ ...prev, [p.id]: err.toString() }));
+                              }
+                            }
+                          }}
+                          placeholder={maskedKeys[p.id] ? `Saved: ${maskedKeys[p.id]}` : "sk-..."}
+                          className={`flex-1 bg-card border ${saveErrors[p.id] ? 'border-error text-error' : 'border-border'} rounded p-1.5 text-xs text-primary focus:outline-none focus:border-accent`}
                         />
+                        <button
+                          onClick={async () => {
+                            if (revealedKeys[p.id] !== undefined) {
+                              const newRev = { ...revealedKeys };
+                              delete newRev[p.id];
+                              setRevealedKeys(newRev);
+                            } else {
+                              const key = await getApiKey(p.id);
+                              setRevealedKeys(prev => ({ ...prev, [p.id]: key || "" }));
+                            }
+                          }}
+                          className="px-2 py-1 bg-hover rounded text-xs border border-border font-semibold text-primary"
+                        >
+                          {revealedKeys[p.id] !== undefined ? "Hide" : "Reveal"}
+                        </button>
                       </div>
+                      {saveErrors[p.id] && (
+                        <p className="text-[10px] text-error mt-1 font-semibold">{saveErrors[p.id]}</p>
+                      )}
                     </div>
 
                     <div className="flex items-center justify-between pt-1 text-xs">
